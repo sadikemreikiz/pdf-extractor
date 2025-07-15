@@ -1,2 +1,5 @@
 streamlit
-openai
+openai>=1.0.0
+PyPDF2
+pdf2image
+pytesseract
