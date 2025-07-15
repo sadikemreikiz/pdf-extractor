@@ -1,79 +1,51 @@
 import streamlit as st
-import openai
-import tempfile
-import os
+import pdfplumber
+from transformers import pipeline
 
-from PyPDF2 import PdfReader
-from pdf2image import convert_from_bytes
-import pytesseract
+@st.cache_resource
+def get_ner():
+    return pipeline("ner", model="savasy/bert-base-turkish-ner-cased", aggregation_strategy="simple")
 
-# Başlık
-st.title("PDF Extractor App (AI Destekli)")
-st.write("PDF dosyasındaki **isim** ve **adres** bilgilerini otomatik çıkartır!")
+ner = get_ner()
 
-# OpenAI API Key kullanıcıdan alınır
-api_key = st.text_input("OpenAI API Key’inizi girin:", type="password")
-if not api_key:
-    st.warning("Devam etmek için lütfen bir OpenAI API Key girin.")
-    st.stop()
+st.title("Türkçe PDF'den İsim ve Adres Çıkarıcı")
+st.write("Herhangi bir PDF dosyasından **isim, adres ve kurum** gibi bilgileri otomatik çıkarır.")
 
-client = openai.OpenAI(api_key=api_key)
-
-# PDF Yükleme
-uploaded_file = st.file_uploader("PDF dosyasını yükle", type=["pdf"])
-
-def extract_text_from_pdf(file):
-    text = ""
-    try:
-        # 1. Önce klasik PDF metin okuma
-        reader = PdfReader(file)
-        for page in reader.pages:
-            text += page.extract_text() or ""
-    except:
-        pass
-    # 2. Eğer metin azsa (görsel taranmış olabilir) → OCR yap
-    if len(text) < 50:
-        try:
-            images = convert_from_bytes(file.getvalue())
-            for img in images:
-                text += pytesseract.image_to_string(img, lang='deu+eng')
-        except Exception as e:
-            st.error(f"OCR sırasında hata: {e}")
-    return text
-
-def gpt_extract_names_addresses(text):
-    prompt = f"""
-    Aşağıda bir Almanca maaş bordrosu, fatura veya resmi belge metni var. 
-    Lütfen metindeki ad-soyad ve adres bilgilerini (adres: sokak adı ve numarası, posta kodu ve şehir) tespit et. 
-    Sadece tablo formatında İsim | Adres | Şehir başlıklarıyla döndür.
-
-    Belge metni:
-    \"\"\"
-    {text}
-    \"\"\"
-    """
-    try:
-        response = client.chat.completions.create(
-            model="gpt-3.5-turbo",
-            messages=[
-                {"role": "system", "content": "Sen belgelerden adres ve isim tespit eden bir asistansın."},
-                {"role": "user", "content": prompt},
-            ],
-            temperature=0,
-            max_tokens=500,
-        )
-        result = response.choices[0].message.content
-        return result
-    except Exception as e:
-        return f"AI hatası: {e}"
-
+uploaded_file = st.file_uploader("PDF dosyasını yükle", type="pdf")
 if uploaded_file:
-    with st.spinner("PDF'den metin okunuyor..."):
-        text = extract_text_from_pdf(uploaded_file)
-    if not text or len(text.strip()) < 10:
-        st.error("PDF'den metin çıkartılamadı!")
-    else:
-        st.success("PDF metni başarıyla okundu. AI ile analiz ediliyor...")
-        result = gpt_extract_names_addresses(text)
-        st.markdown("#### Çıkarılan Bilgiler:")
-        st.markdown(result)
+    text = ""
+    with pdfplumber.open(uploaded_file) as pdf:
+        for page in pdf.pages:
+            page_text = page.extract_text()
+            if page_text:
+                text += page_text + "\n"
+
+    st.info("PDF içeriği okundu. AI ile analiz ediliyor...")
+
+    results = ner(text)
+    isimler, kurumlar, adresler = set(), set(), set()
+    for r in results:
+        if r["entity_group"] == "PER":
+            isimler.add(r["word"])
+        elif r["entity_group"] == "ORG":
+            kurumlar.add(r["word"])
+        elif r["entity_group"] == "LOC":
+            adresler.add(r["word"])
+
+    st.subheader("Çıkarılan Bilgiler:")
+    st.write("**İsimler:**", ", ".join(isimler) if isimler else "Bulunamadı.")
+    st.write("**Kurumlar:**", ", ".join(kurumlar) if kurumlar else "Bulunamadı.")
+    st.write("**Adresler:**", ", ".join(adresler) if adresler else "Bulunamadı.")
+
+    import pandas as pd
+    df = pd.DataFrame({
+        "İsim": list(isimler),
+        "Kurum": list(kurumlar),
+        "Adres": list(adresler)
+    })
+    st.download_button(
+        label="CSV olarak indir",
+        data=df.to_csv(index=False),
+        file_name="cikarilan_bilgiler.csv",
+        mime="text/csv"
+    )
