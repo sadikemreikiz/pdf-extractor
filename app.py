@@ -1,48 +1,53 @@
 import streamlit as st
-import pytesseract
-from pdf2image import convert_from_bytes
-from PIL import Image
-import pandas as pd
+import openai
 
-st.title("PDF/Görsel OCR Extractor")
-st.write("PDF veya resimden isim/adres/şehir bilgisini otomatik çıkar!")
+st.title("AI PDF/Görsel Extractor")
+st.write("Her tür PDF veya görselde *isim* ve *adres*leri otomatik bulur, tablo halinde çıkarır.")
 
-uploaded_file = st.file_uploader("PDF veya Görsel yükle", type=["pdf", "jpg", "jpeg", "png"])
+uploaded_file = st.file_uploader("Belge yükle (PDF/JPG/PNG):", type=["pdf", "jpg", "jpeg", "png"])
+api_key = st.text_input("OpenAI API Key’in:", type="password")
 
-if uploaded_file:
-    all_text = ""
-    # PDF ise her sayfayı görsele çevir, OCR uygula
-    if uploaded_file.type == "application/pdf":
-        images = convert_from_bytes(uploaded_file.read())
-        for img in images:
-            text = pytesseract.image_to_string(img, lang='deu+eng')  # Almanca/İngilizce desteği için
-            all_text += text + "\n"
-    else:
-        # Görsel dosya ise doğrudan OCR uygula
-        img = Image.open(uploaded_file)
-        all_text = pytesseract.image_to_string(img, lang='deu+eng')
-
-    # Satırlara böl, gereksiz boşlukları temizle
-    lines = [line.strip() for line in all_text.split('\n') if line.strip() != ""]
-
-    data = []
-    # 3 satırda bir isim, adres, şehir olarak işle
-    for i in range(0, len(lines)-2, 3):
-        grup = lines[i:i+3]
-        if len(grup) == 3:
-            isim, adres, sehir = grup
-            data.append({"İsim": isim, "Adres": adres, "Şehir": sehir})
-
-    df = pd.DataFrame(data)
-    st.write("Çıkarılan Bilgiler:")
-    st.dataframe(df)
-    if not df.empty:
-        csv = df.to_csv(index=False).encode('utf-8')
-        st.download_button(
-            label="CSV olarak indir",
-            data=csv,
-            file_name='ocr_adresler.csv',
-            mime='text/csv',
+if uploaded_file and api_key:
+    with st.spinner("AI analiz ediyor, lütfen bekle..."):
+        file_bytes = uploaded_file.read()
+        # OpenAI Vision modeline hem dosyayı hem promptu gönderiyoruz:
+        response = openai.chat.completions.create(
+            model="gpt-4o",  # veya "gpt-4-vision-preview" (her ikisi de olur)
+            messages=[
+                {
+                    "role": "system",
+                    "content": (
+                        "Kullanıcıdan gelen belgeyi oku ve varsa içindeki tüm kişi **isim** ve **adres** bilgilerini ayıkla. "
+                        "Sadece isim ve adresleri tablo halinde, Türkçe başlıklarla yaz (örn: İsim, Adres, Şehir). "
+                        "Başka hiçbir şey yazma."
+                    ),
+                },
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": "Lütfen bu dosyadan isim ve adresleri çıkar:"},
+                        {
+                            "type": "file",
+                            "file": {
+                                "name": uploaded_file.name,
+                                "mime_type": uploaded_file.type,
+                                "data": file_bytes,
+                            },
+                        },
+                    ],
+                }
+            ],
+            max_tokens=1200,
+            api_key=api_key,
         )
+        st.markdown(response.choices[0].message.content)
 else:
-    st.info("Başlamak için PDF veya resim yükleyin.")
+    st.info("Belgeyi yükle ve OpenAI API anahtarını gir.")
+
+st.markdown("""
+---
+:bulb: **Kullanım:**  
+1. PDF veya görsel dosyanı yükle  
+2. OpenAI API Key’ini gir  
+3. AI otomatik olarak tablo halinde isim ve adresleri çıkarır.
+""")
