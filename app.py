@@ -38,11 +38,12 @@ if uploaded_file:
     st.write("**Adresler:**", ", ".join(adresler) if adresler else "Bulunamadı.")
 
     import pandas as pd
+    min_len = min(len(isimler), len(kurumlar), len(adresler))
     df = pd.DataFrame({
-        "İsim": list(isimler),
-        "Kurum": list(kurumlar),
-        "Adres": list(adresler)
-    })
+    "İsim": list(isimler)[:min_len],
+    "Kurum": list(kurumlar)[:min_len],
+    "Adres": list(adresler)[:min_len]
+})
     st.download_button(
         label="CSV olarak indir",
         data=df.to_csv(index=False),
